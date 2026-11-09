@@ -3,6 +3,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use serde_json::Value;
+use ureq::http::StatusCode;
 use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::config::Credentials;
@@ -37,6 +38,7 @@ impl Client {
     /// GETs `path` below [`BASE_URL`] and returns the decoded JSON body.
     pub fn get(&self, path: &str, query: &Query) -> Result<Value> {
         let key = self.creds.app_key.expose();
+        let label = request_label(path, query);
         let mut request = self
             .agent
             .get(format!("{BASE_URL}/{path}"))
@@ -46,27 +48,36 @@ impl Client {
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        let mut response = request.call().map_err(|err| {
-            anyhow!(
-                "request to /{path} failed: {}",
-                redact(&err.to_string(), key)
-            )
-        })?;
-        let status = response.status().as_u16();
+        let mut response = request
+            .call()
+            .map_err(|err| anyhow!("{label}: {}", redact(&err.to_string(), key)))?;
+        let status = response.status();
         let body = response.body_mut().read_to_string().map_err(|err| {
             anyhow!(
-                "reading /{path} response: {}",
+                "{label}: reading response: {}",
                 redact(&err.to_string(), key)
             )
         })?;
-        if status != 200 {
+        if status != StatusCode::OK {
             return Err(anyhow!(
-                "/{path}: {}",
+                "{label}: {}",
                 redact(&describe_error(status, &body), key)
             ));
         }
-        serde_json::from_str(&body).map_err(|err| anyhow!("/{path} returned invalid JSON: {err}"))
+        serde_json::from_str(&body).map_err(|err| anyhow!("{label}: invalid JSON: {err}"))
     }
+}
+
+/// `GET /path?name=value&...` for error messages. Credentials are not part of `query`.
+fn request_label(path: &str, query: &Query) -> String {
+    let mut label = format!("GET /{path}");
+    for (index, (name, value)) in query.iter().enumerate() {
+        label.push(if index == 0 { '?' } else { '&' });
+        label.push_str(name);
+        label.push('=');
+        label.push_str(value);
+    }
+    label
 }
 
 /// Error body documented as `Exception` in the Adzuna `OpenAPI` spec.
@@ -76,19 +87,20 @@ struct ApiException {
     exception: Option<String>,
 }
 
-/// Turns a non-200 response into one line, falling back to a body snippet for non-JSON pages.
-fn describe_error(status: u16, body: &str) -> String {
+/// One line for a non-200 response. HTML error pages are dropped because they carry no detail.
+fn describe_error(status: StatusCode, body: &str) -> String {
     if let Ok(ApiException { display, exception }) = serde_json::from_str(body) {
         if let Some(detail) = display.or(exception) {
             return format!("HTTP {status}: {detail}");
         }
     }
-    let snippet: String = body.trim().chars().take(BODY_SNIPPET_CHARS).collect();
-    if snippet.is_empty() {
-        format!("HTTP {status} with empty body")
-    } else {
-        format!("HTTP {status}: {snippet}")
+    let body = body.trim();
+    if body.is_empty() || body.starts_with('<') {
+        return format!("HTTP {status}");
     }
+    let first_line = body.lines().next().unwrap_or_default();
+    let snippet: String = first_line.chars().take(BODY_SNIPPET_CHARS).collect();
+    format!("HTTP {status}: {snippet}")
 }
 
 fn redact(text: &str, secret: &str) -> String {
@@ -102,29 +114,61 @@ fn redact(text: &str, secret: &str) -> String {
 mod tests {
     use super::*;
 
+    fn status(code: u16) -> StatusCode {
+        StatusCode::from_u16(code).unwrap_or(StatusCode::IM_A_TEAPOT)
+    }
+
     #[test]
     fn json_error_uses_display_then_exception() {
         let body = r#"{"display":"Invalid country","exception":"BAD_REQUEST","doc":"x"}"#;
-        assert_eq!(describe_error(400, body), "HTTP 400: Invalid country");
+        assert_eq!(
+            describe_error(status(400), body),
+            "HTTP 400 Bad Request: Invalid country"
+        );
         let body = r#"{"exception":"AUTH_FAIL"}"#;
-        assert_eq!(describe_error(401, body), "HTTP 401: AUTH_FAIL");
+        assert_eq!(
+            describe_error(status(401), body),
+            "HTTP 401 Unauthorized: AUTH_FAIL"
+        );
     }
 
     #[test]
-    fn html_error_page_is_truncated_not_a_parse_failure() {
-        let body = format!("<html>{}</html>", "é".repeat(500));
-        let message = describe_error(502, &body);
-        assert!(message.starts_with("HTTP 502: <html>"));
+    fn html_error_page_is_reduced_to_the_status() {
+        let body = "\n<!DOCTYPE html><html><body>Chef ...</body></html>";
+        assert_eq!(describe_error(status(400), body), "HTTP 400 Bad Request");
+        assert_eq!(
+            describe_error(status(503), "  \n"),
+            "HTTP 503 Service Unavailable"
+        );
+    }
+
+    #[test]
+    fn plain_text_error_keeps_a_bounded_first_line() {
+        let body = format!("{}\nsecond line", "é".repeat(500));
+        let message = describe_error(status(500), &body);
+        let prefix = "HTTP 500 Internal Server Error: ";
+        assert!(message.starts_with(prefix));
         assert_eq!(
             message.chars().count(),
-            "HTTP 502: ".len() + BODY_SNIPPET_CHARS
+            prefix.chars().count() + BODY_SNIPPET_CHARS
         );
-        assert_eq!(describe_error(503, "  \n"), "HTTP 503 with empty body");
+        assert_eq!(
+            describe_error(status(500), "{}"),
+            "HTTP 500 Internal Server Error: {}"
+        );
     }
 
     #[test]
-    fn json_without_message_fields_falls_back_to_body() {
-        assert_eq!(describe_error(500, "{}"), "HTTP 500: {}");
+    fn request_label_names_path_and_parameters() {
+        let query = vec![
+            ("location0", "UK".to_owned()),
+            ("category", "nope-jobs".to_owned()),
+        ];
+        assert_eq!(
+            request_label("jobs/gb/history", &query),
+            "GET /jobs/gb/history?location0=UK&category=nope-jobs"
+        );
+        assert_eq!(request_label("version", &Query::new()), "GET /version");
     }
 
     #[test]
