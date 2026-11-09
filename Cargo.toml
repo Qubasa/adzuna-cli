@@ -18,7 +18,7 @@ csv = "1.4.0"
 dirs = "7.0.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-ureq = "3.5.1"
+ureq = { version = "3.5.1", features = ["platform-verifier"] }
 
 [lints.rust]
 unsafe_code = "forbid"

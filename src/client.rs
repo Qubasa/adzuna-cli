@@ -3,6 +3,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use serde_json::Value;
+use ureq::tls::{RootCerts, TlsConfig};
 
 use crate::config::Credentials;
 
@@ -19,10 +20,15 @@ pub struct Client {
 
 impl Client {
     pub fn new(creds: Credentials) -> Self {
+        // The OS trust store honours SSL_CERT_FILE, so a TLS-intercepting proxy's CA is trusted.
+        let tls = TlsConfig::builder()
+            .root_certs(RootCerts::PlatformVerifier)
+            .build();
         let agent = ureq::Agent::config_builder()
             .timeout_global(Some(TIMEOUT))
             .http_status_as_error(false)
             .user_agent(concat!("adzuna-cli/", env!("CARGO_PKG_VERSION")))
+            .tls_config(tls)
             .build()
             .into();
         Self { agent, creds }

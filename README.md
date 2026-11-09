@@ -24,6 +24,9 @@ adzuna setup --app-id 1a2b3c4d --app-key-command 'rbw get adzuna-app-key'
 `$XDG_CONFIG_HOME/adzuna/config.json`. `ADZUNA_APP_ID` and `ADZUNA_APP_KEY` in the environment
 take precedence over the config file.
 
+TLS certificates are checked against the operating system's trust store, so `SSL_CERT_FILE`
+can add the CA of an intercepting proxy.
+
 ## Usage
 
 Every command takes the country code first (`at au be br ca ch de es fr gb in it mx nl nz pl
