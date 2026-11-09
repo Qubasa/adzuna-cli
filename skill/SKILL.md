@@ -30,10 +30,10 @@ adzuna history gb --location UK --location London --category it-jobs --months 12
 # Gotchas
 
 - `--where` (free text) exists only on `search`. The statistics commands take
-  `--location LEVEL` repeated, copied from the `area` column of search results, and the
-  first level is always Adzuna's country name: `--location UK --location London`,
+  `--location LEVEL` repeated, one per level of an `area` path, and the first level is always
+  Adzuna's country name: `--location UK --location London`,
   `--location Deutschland --location Berlin`. Without the country level the API answers
-  HTTP 400.
+  HTTP 400. `adzuna geodata <country>` lists valid `area` paths one level deeper each time.
 - `geodata` and `history` accept no keywords; narrow them with `--category`.
 - `(estimated)` after a salary means Adzuna predicted it; the employer did not publish it.
 - `--salary-min` drops ads without a salary unless `--include-unknown-salary` is set.

@@ -63,12 +63,12 @@ fn fetch(client: &Client, command: &ApiCommand) -> Result<(Value, View)> {
         }
         ApiCommand::TopCompanies(args) => {
             let value = api::top_companies(client, args)?;
-            let view = output::top_companies_view(&value, args.area.country.currency())?;
+            let view = output::top_companies_view(&value)?;
             (value, view)
         }
         ApiCommand::Geodata(args) => {
             let value = api::geodata(client, args)?;
-            let view = output::geodata_view(&value, args.country.currency())?;
+            let view = output::geodata_view(&value)?;
             (value, view)
         }
         ApiCommand::History(args) => {

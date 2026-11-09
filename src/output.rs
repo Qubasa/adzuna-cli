@@ -121,44 +121,42 @@ pub fn histogram_view(value: &Value, currency: &'static str) -> Result<View> {
     }))
 }
 
-pub fn top_companies_view(value: &Value, currency: &'static str) -> Result<View> {
+pub fn top_companies_view(value: &Value) -> Result<View> {
     let top = TopCompanies::deserialize(value).context("decoding top companies")?;
     let rows = top
         .leaderboard
         .into_iter()
         .map(|c| {
             let name = c.canonical_name.or(c.display_name);
-            vec![
-                Cell::Text(name.unwrap_or_default()),
-                Cell::Count(c.count),
-                Cell::Amount(c.average_salary),
-                Cell::Text(currency.to_owned()),
-            ]
+            vec![Cell::Text(name.unwrap_or_default()), Cell::Count(c.count)]
         })
         .collect();
     Ok(View::Table(Table {
-        headers: &["company", "ads", "average_salary", "currency"],
+        headers: &["company", "ads"],
         rows,
     }))
 }
 
-pub fn geodata_view(value: &Value, currency: &'static str) -> Result<View> {
+/// Sub-regions with their `area` path, which is the value list `--location` expects.
+pub fn geodata_view(value: &Value) -> Result<View> {
     let geo = GeoData::deserialize(value).context("decoding geodata")?;
     let rows = geo
         .locations
         .into_iter()
         .map(|l| {
-            let name = l.location.and_then(|l| l.display_name);
+            let (name, area) = match l.location {
+                Some(location) => (location.display_name, location.area.join(" > ")),
+                None => (None, String::new()),
+            };
             vec![
                 Cell::Text(name.unwrap_or_default()),
                 Cell::Count(l.count),
-                Cell::Amount(l.average_salary),
-                Cell::Text(currency.to_owned()),
+                Cell::Text(area),
             ]
         })
         .collect();
     Ok(View::Table(Table {
-        headers: &["location", "ads", "average_salary", "currency"],
+        headers: &["location", "ads", "area"],
         rows,
     }))
 }

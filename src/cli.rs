@@ -64,7 +64,7 @@ pub enum ApiCommand {
     Histogram(StatsArgs),
     /// Employers with the most matching ads.
     TopCompanies(StatsArgs),
-    /// Ad counts and salaries per sub-region of --location.
+    /// Ad counts per sub-region of --location, with the `area` path to pass as --location.
     Geodata(AreaArgs),
     /// Average advertised salary per month.
     History(HistoryArgs),

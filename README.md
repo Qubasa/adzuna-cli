@@ -51,12 +51,16 @@ adzuna version
 
 `search --where` takes free text (a town or postcode). The statistics endpoints (`histogram`,
 `top-companies`, `geodata`, `history`) only accept Adzuna's location hierarchy: the levels of
-the `area` field in search results, in order, starting with Adzuna's name for the country
-(`UK`, `Deutschland`, ...). Leaving out the country makes the API answer HTTP 400.
+an `area` path, in order, starting with Adzuna's name for the country (`UK`, `Deutschland`,
+...). Leaving out the country makes the API answer HTTP 400.
+
+`geodata` lists the sub-regions of a location together with their `area` path, so it doubles as
+a way to look up valid levels:
 
 ```bash
-adzuna search de --where Berlin --limit 1 --format csv   # area column: Deutschland > Berlin > ...
-adzuna geodata de --location Deutschland --location Berlin
+adzuna geodata gb                                          # area: UK > London, UK > South East England, ...
+adzuna geodata de --location Deutschland --location Berlin # area: Deutschland > Berlin > Kreuzberg, ...
+adzuna history gb --location UK --location London --category it-jobs
 ```
 
 `geodata` and `history` do not accept keywords; filter them with `--category`.

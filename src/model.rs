@@ -31,7 +31,6 @@ pub struct Company {
     pub display_name: Option<String>,
     pub canonical_name: Option<String>,
     pub count: Option<u64>,
-    pub average_salary: Option<f64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -72,7 +71,6 @@ pub struct GeoData {
 #[serde(default)]
 pub struct LocationJobs {
     pub count: Option<u64>,
-    pub average_salary: Option<f64>,
     pub location: Option<Location>,
 }
 
