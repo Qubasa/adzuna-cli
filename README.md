@@ -71,6 +71,12 @@ Each command makes one request, except `search`, which makes one request per 50 
 (`--limit 120` costs 3). It stops early when the results run out. Pages keep a constant size,
 so `--page 3 --limit 20` returns ads 41 to 60.
 
+Adzuna sometimes answers HTTP 503, or HTTP 504 when a slow query outlives its gateway (about
+30 s). The same request usually succeeds shortly after, so the CLI retries those two statuses
+and client timeouts (60 s) up to twice, waiting 5 s and then 15 s, with a note on stderr. Each
+retry costs one more request. Other errors, such as HTTP 400 for an unknown `--category` or a
+`--location` without the country level, fail immediately.
+
 ## Agent skill
 
 `skill/SKILL.md` teaches a coding agent to use the CLI. Link it into the agent's skill

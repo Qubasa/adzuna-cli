@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
@@ -9,8 +11,11 @@ use ureq::tls::{RootCerts, TlsConfig};
 use crate::config::Credentials;
 
 pub const BASE_URL: &str = "https://api.adzuna.com/v1/api";
-const TIMEOUT: Duration = Duration::from_secs(30);
+/// Longer than the ~30 s after which Adzuna's nginx gives up, so its 504 reaches us.
+const TIMEOUT: Duration = Duration::from_secs(60);
 const BODY_SNIPPET_CHARS: usize = 200;
+/// Waits before the second and third attempt. Each retry costs one more request of quota.
+const RETRY_DELAYS: [Duration; 2] = [Duration::from_secs(5), Duration::from_secs(15)];
 
 pub type Query = Vec<(&'static str, String)>;
 
@@ -36,36 +41,100 @@ impl Client {
     }
 
     /// GETs `path` below [`BASE_URL`] and returns the decoded JSON body.
+    ///
+    /// Adzuna intermittently answers 503, or 504 when a slow query outlives its gateway, and
+    /// the same request then succeeds later. Those failures and client timeouts are retried
+    /// after [`RETRY_DELAYS`], with a note on stderr so the wait is visible.
     pub fn get(&self, path: &str, query: &Query) -> Result<Value> {
-        let key = self.creds.app_key.expose();
-        let label = request_label(path, query);
+        let mut attempts = 1;
+        loop {
+            let failure = match self.send(path, query) {
+                Ok(value) => return Ok(value),
+                Err(failure) => failure,
+            };
+            let message = redact(&failure.to_string(), self.creds.app_key.expose());
+            let label = request_label(path, query);
+            let Some(delay) = retry_delay(attempts, &failure) else {
+                if attempts == 1 {
+                    return Err(anyhow!("{label}: {message}"));
+                }
+                return Err(anyhow!("{label}: {message} (after {attempts} attempts)"));
+            };
+            // A lost stderr must not abort a request that may still succeed.
+            let _ = writeln!(
+                io::stderr(),
+                "{label}: {message}, retrying in {}s",
+                delay.as_secs()
+            );
+            thread::sleep(delay);
+            attempts += 1;
+        }
+    }
+
+    fn send(&self, path: &str, query: &Query) -> Result<Value, Failure> {
         let mut request = self
             .agent
             .get(format!("{BASE_URL}/{path}"))
             .header("Accept", "application/json")
             .query("app_id", &self.creds.app_id)
-            .query("app_key", key);
+            .query("app_key", self.creds.app_key.expose());
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        let mut response = request
-            .call()
-            .map_err(|err| anyhow!("{label}: {}", redact(&err.to_string(), key)))?;
+        let mut response = request.call().map_err(Failure::Transport)?;
         let status = response.status();
-        let body = response.body_mut().read_to_string().map_err(|err| {
-            anyhow!(
-                "{label}: reading response: {}",
-                redact(&err.to_string(), key)
-            )
-        })?;
+        let body = response
+            .body_mut()
+            .read_to_string()
+            .map_err(Failure::Transport)?;
         if status != StatusCode::OK {
-            return Err(anyhow!(
-                "{label}: {}",
-                redact(&describe_error(status, &body), key)
-            ));
+            return Err(Failure::Status { status, body });
         }
-        serde_json::from_str(&body).map_err(|err| anyhow!("{label}: invalid JSON: {err}"))
+        serde_json::from_str(&body).map_err(Failure::InvalidJson)
     }
+}
+
+enum Failure {
+    Status { status: StatusCode, body: String },
+    Transport(ureq::Error),
+    InvalidJson(serde_json::Error),
+}
+
+impl Failure {
+    fn is_transient(&self) -> bool {
+        match self {
+            Self::Status { status, .. } => {
+                *status == StatusCode::SERVICE_UNAVAILABLE || *status == StatusCode::GATEWAY_TIMEOUT
+            }
+            Self::Transport(err) => matches_timeout(err),
+            Self::InvalidJson(_) => false,
+        }
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Status { status, body } => f.write_str(&describe_error(*status, body)),
+            Self::Transport(err) => write!(f, "{err}"),
+            Self::InvalidJson(err) => write!(f, "invalid JSON: {err}"),
+        }
+    }
+}
+
+fn matches_timeout(err: &ureq::Error) -> bool {
+    let ureq::Error::Timeout(_) = err else {
+        return false;
+    };
+    true
+}
+
+/// Delay before the next attempt, or `None` when `failure` is permanent or retries are used up.
+fn retry_delay(attempts_made: usize, failure: &Failure) -> Option<Duration> {
+    if !failure.is_transient() {
+        return None;
+    }
+    RETRY_DELAYS.get(attempts_made.checked_sub(1)?).copied()
 }
 
 /// `GET /path?name=value&...` for error messages. Credentials are not part of `query`.
@@ -179,5 +248,34 @@ mod tests {
             "https://x/?app_id=1&app_key=<redacted>&q=<redacted>"
         );
         assert_eq!(redact("text", ""), "text");
+    }
+
+    fn http_failure(code: u16) -> Failure {
+        Failure::Status {
+            status: status(code),
+            body: "<!DOCTYPE html>".to_owned(),
+        }
+    }
+
+    #[test]
+    fn unavailable_gateway_timeout_and_timeouts_retry_twice_then_give_up() {
+        for code in [503, 504] {
+            let failure = http_failure(code);
+            assert_eq!(retry_delay(1, &failure), Some(Duration::from_secs(5)));
+            assert_eq!(retry_delay(2, &failure), Some(Duration::from_secs(15)));
+            assert_eq!(retry_delay(3, &failure), None);
+        }
+        let timeout = Failure::Transport(ureq::Error::Timeout(ureq::Timeout::Global));
+        assert_eq!(retry_delay(1, &timeout), Some(Duration::from_secs(5)));
+        assert_eq!(retry_delay(3, &timeout), None);
+    }
+
+    #[test]
+    fn caller_errors_and_other_failures_are_not_retried() {
+        for code in [400, 401, 404, 410, 429, 500, 502] {
+            assert_eq!(retry_delay(1, &http_failure(code)), None, "HTTP {code}");
+        }
+        let refused = Failure::Transport(ureq::Error::Io(std::io::Error::other("refused")));
+        assert_eq!(retry_delay(1, &refused), None);
     }
 }
