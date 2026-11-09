@@ -39,8 +39,8 @@ adzuna search us python --salary-min 150000 --contract-type permanent --format c
 adzuna categories gb
 adzuna histogram gb devops --category it-jobs
 adzuna top-companies de software engineer
-adzuna geodata gb --location London
-adzuna history gb --location London --category it-jobs --months 12
+adzuna geodata gb --location UK --location London
+adzuna history gb --location UK --location London --category it-jobs --months 12
 adzuna version
 ```
 
@@ -50,11 +50,13 @@ adzuna version
 ### Locations
 
 `search --where` takes free text (a town or postcode). The statistics endpoints (`histogram`,
-`top-companies`, `geodata`, `history`) only accept Adzuna's location hierarchy, outermost level
-first, using the `area` values that search results report without the country:
+`top-companies`, `geodata`, `history`) only accept Adzuna's location hierarchy: the levels of
+the `area` field in search results, in order, starting with Adzuna's name for the country
+(`UK`, `Deutschland`, ...). Leaving out the country makes the API answer HTTP 400.
 
 ```bash
-adzuna geodata gb --location London --location "Central London"
+adzuna search de --where Berlin --limit 1 --format csv   # area column: Deutschland > Berlin > ...
+adzuna geodata de --location Deutschland --location Berlin
 ```
 
 `geodata` and `history` do not accept keywords; filter them with `--category`.

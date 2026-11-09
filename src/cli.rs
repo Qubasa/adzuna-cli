@@ -76,8 +76,9 @@ pub enum ApiCommand {
 pub struct AreaArgs {
     pub country: Country,
 
-    /// Location hierarchy, outermost first: `--location London --location "Central London"`.
-    /// Use the `area` values that search results report, without the country. Up to 8 levels.
+    /// Location hierarchy exactly as the `area` field of search results lists it, starting with
+    /// Adzuna's name for the country: `--location UK --location London`,
+    /// `--location Deutschland --location Berlin`. Up to 8 levels.
     #[arg(long = "location", value_name = "AREA")]
     pub locations: Vec<String>,
 
@@ -409,11 +410,24 @@ mod tests {
     }
 
     #[test]
-    fn locations_become_numbered_levels_and_cap_at_eight() -> Result<()> {
-        let query = query_of(&["search", "gb", "--location", "London", "--location", "Soho"])?;
+    fn locations_map_area_levels_in_order_country_first() -> Result<()> {
+        let query = query_of(&[
+            "search",
+            "de",
+            "--location",
+            "Deutschland",
+            "--location",
+            "Berlin",
+            "--location",
+            "Tegel",
+        ])?;
         assert_eq!(
             pairs(&query),
-            [("location0", "London"), ("location1", "Soho")]
+            [
+                ("location0", "Deutschland"),
+                ("location1", "Berlin"),
+                ("location2", "Tegel")
+            ]
         );
 
         let mut nine = vec!["search", "gb"];

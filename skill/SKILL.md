@@ -21,8 +21,8 @@ adzuna categories gb
 # Salary distribution, employers, regions, trend
 adzuna histogram gb devops --category it-jobs
 adzuna top-companies de software engineer
-adzuna geodata gb --location London
-adzuna history gb --location London --category it-jobs --months 12
+adzuna geodata gb --location UK --location London
+adzuna history gb --location UK --location London --category it-jobs --months 12
 ```
 
 `--format json` returns the raw API response for `jq`; `--format csv` gives one row per item.
@@ -30,8 +30,10 @@ adzuna history gb --location London --category it-jobs --months 12
 # Gotchas
 
 - `--where` (free text) exists only on `search`. The statistics commands take
-  `--location LEVEL` repeated, outermost first, without the country:
-  `--location London --location "Central London"`.
+  `--location LEVEL` repeated, copied from the `area` column of search results, and the
+  first level is always Adzuna's country name: `--location UK --location London`,
+  `--location Deutschland --location Berlin`. Without the country level the API answers
+  HTTP 400.
 - `geodata` and `history` accept no keywords; narrow them with `--category`.
 - `(estimated)` after a salary means Adzuna predicted it; the employer did not publish it.
 - `--salary-min` drops ads without a salary unless `--include-unknown-salary` is set.
